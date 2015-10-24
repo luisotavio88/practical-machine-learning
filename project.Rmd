@@ -1,68 +1,99 @@
-# Coursera Machine Learning Project
+---
+title: "ML project"
+author: "Luis Otavio"
+date: "Saturday, October 24, 2015"
+output: html_document
+---
+
+#Coursera Machine Learning Project
 
 Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
 
-## Modeling
+Loading the packages needed:
 
-In order to provide consistent data to construct features, the first task was to sanitize the data.  The following steps where taken:
-
-1.  Remove excel division error strings `#DIV/0!` and replace with `NA` values.
-1.  Convert empty strings to `NA` values.
-
-The primary code to preprocess the data is located [here](http://github.com/bpoweski/practical-machine-learning/blob/master/project.R).
-
-There is additional code within the knitr markdown file [here](http://github.com/bpoweski/practical-machine-learning/blob/master/project.Rmd).
-
-## Feature Selection
-
-With a clean data set, the next task was to explore the data and determine what is likely useful information.  An important goal of any model to generalize well with unseen data.  Given this,
-
-1.  Any features that contained NA values were removed.
-1.  Several columns appeared to be entirely metadata.  These columns were dropped as any correlation that exists would likely be spurious and therefore cause the model to perform poorly.
-
-The following fields removed included:
-
-* the unlabled row index
-* `user_name`
-* `raw_timestamp_part_1`
-* `raw_timestamp_part_2`
-* `cvtd_timestamp`
-* `new_window`
-* `num_window`
-
-## Cross Validation
-
-Cross validation was achieved by splitting the training data into a test set and a training set using the following:
-
-```{r cross_validate}
-in.train <- createDataPartition(training.features$classe, p=.60, list=FALSE)
-
-train <- training.features[in.train[,1]]
-test <- training.features[-in.train[,1]]
+```{r echo=FALSE, cache=FALSE,warning=FALSE} 
+library(caret)
+library(randomForest)
+library(doParallel)
+library(foreach)
+library(e1071)
 ```
 
-The data was partioned by the `classe` variable to ensure the training set and test set contain examples of each class. 60% of the training data was allocated to the training set and the remainder for the validation set.
+##Read the data and transform #DIV/0! in NA cases.
 
-## Prediction
-
-The random forest model was initially used to prediction.
-
-```{r train, echo=F}
-model.rf <- train(y=as.factor(train$classe), x=train[,!"classe",with=F], tuneGrid=data.frame(mtry=3), trControl=trainControl(method="none"), method="parRF")
+```{r, warning=FALSE}
+pml.training <- read.csv("pml-training.csv", na.strings=c("#DIV/0!") )
+pml.testing <- read.csv("pml-testing.csv", na.strings=c("#DIV/0!") )
 ```
 
-```{r confusion_matrix, echo=F}
-confusionMatrix(predict(model.rf, newdata=transform.features(test)), factor(test$classe))
+##Cleaning data
+Transforming some columns in numeric and excluding features without values.
+
+```{r, warning=FALSE}
+for(i in c(8:ncol(pml.training)-1)) {pml.training[,i] = as.numeric(as.character(pml.training[,i]))}
+for(i in c(8:ncol(pml.testing)-1)) {pml.testing[,i] = as.numeric(as.character(pml.testing[,i]))}
+
+feature_set <- colnames(pml.training[colSums(is.na(pml.training)) == 0])[-(1:7)]
+model_data <- pml.training[feature_set]
+feature_set <- colnames(pml.testing[colSums(is.na(pml.testing)) == 0])[-(1:7)]
+model_data_TEST <- pml.testing[feature_set]
 ```
 
-It's estimated that the out of sample error would reflect the Kappa statistic of `r confusionMatrix(predict(model.rf, newdata=transform.features(test)), factor(test$classe))$overall["Kappa"]`.
+##Data Validation
 
-### Variable Importance
+Split the training dataset into train and test datasets.The data was partioned by the "classe" variable to ensure
+the training set and test set contain examples of each class. 60% of the training data was allocated to the 
+training set and the remainder for the validation set.
 
-```{r variable_importance, echo=F}
-print(plot(varImp(model.rf, scale = FALSE)))
+```{r, warning=FALSE}
+rows <- createDataPartition(y=model_data$classe, p=0.6, list=FALSE )
+train<- model_data[rows,]
+test <- model_data[-rows,]
+```
+## Random forest
+Seven random forests with 150 trees each were built. The parallel processing were used to make it faster.
+
+```{r, warning=FALSE}
+registerDoParallel()
+x <- train[-ncol(train)]
+y <- train$classe
+
+rf <- foreach(ntree=rep(150, 6), .combine=randomForest::combine, .packages='randomForest') %dopar% {
+        randomForest(x, y, ntree=ntree) 
+}
 ```
 
-## Conclusion
 
-The random forest algorithm appears to perform very well for predicting activities from accelerometers measurements.
+##Provide error reports for both training and test data
+```{r, warning=FALSE}
+
+predictions1 <- predict(rf, newdata=train)
+confusionMatrix(predictions1,train$classe)
+
+predictions2 <- predict(rf, newdata=test)
+confusionMatrix(predictions2,test$classe)
+```
+
+
+#Conclusions
+
+So, as can be seen from the confusion matrix, this model is very accurate.
+
+
+##Coursera provided code:
+
+```{r, warning=FALSE}
+answers <- predict(rf, newdata=model_data_TEST)
+
+pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+                filename = paste0("problem_id_",i,".txt")
+                write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+}
+pml_write_files(answers)
+
+```
+
+
